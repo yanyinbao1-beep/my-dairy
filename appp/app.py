@@ -8,100 +8,116 @@ from datetime import datetime
 import random
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. 定时器：每10秒刷新感知，每180秒执行总结 ---
-refresh_count = st_autorefresh(interval=10000, key="bot_heartbeat")
-
-# --- 2. 外部数据：天气感知 ---
-def get_weather():
-    try:
-        # 默认北京，可修改经纬度
-        url = "https://api.open-meteo.com/v1/forecast?latitude=39.9&longitude=116.4&current_weather=true"
-        res = requests.get(url, timeout=5).json()
-        temp = res['current_weather']['temperature']
-        code = res['current_weather']['weathercode']
-        desc = "晴朗 ☀️" if code == 0 else "多云 ☁️" if code < 50 else "阴雨 🌧️"
-        return f"{desc} {temp}℃"
-    except:
-        return "室内环境 🏠"
-
-# --- 3. 初始化状态 ---
+# --- 1. 初始化与配置 ---
+if "current_page" not in st.session_state: st.session_state.current_page = "main"
 if "face_log" not in st.session_state: st.session_state.face_log = []
 if "chat_log" not in st.session_state: st.session_state.chat_log = []
 if "start_time" not in st.session_state: st.session_state.start_time = datetime.now()
 if "last_score" not in st.session_state: st.session_state.last_score = 0.5
 
+def navigate_to(page):
+    st.session_state.current_page = page
+    st.rerun()
+
+# --- 2. 外部感知模块 (天气 + 温度) ---
+def get_env_data():
+    try:
+        url = "https://api.open-meteo.com/v1/forecast?latitude=39.9&longitude=116.4&current_weather=true"
+        res = requests.get(url, timeout=3).json()
+        temp = res['current_weather']['temperature']
+        code = res['current_weather']['weathercode']
+        desc = "晴朗" if code == 0 else "多云" if code < 50 else "阴雨"
+        return {"desc": desc, "temp": temp}
+    except:
+        return {"desc": "室内", "temp": 25.0}
+
+env = get_env_data()
 client = OpenAI(api_key=st.secrets["api_key"], base_url="https://api.deepseek.com")
-weather_now = get_weather()
 
-# --- 4. 动态行为：全站变色 ---
-score = st.session_state.last_score
-# 根据心情分数调整背景（0为灰蓝，1为暖金）
-hue = 210 if score < 0.4 else 45 if score > 0.7 else 200
-light = 85 if score < 0.4 else 95
-st.markdown(f"""
-    <style>
-    .stApp {{ background-color: hsl({hue}, 30%, {light}%); transition: all 2s ease-in-out; }}
-    .bot-card {{ background: rgba(255,255,255,0.8); border-radius: 15px; padding: 20px; margin-bottom: 15px; border-left: 5px solid #4a90e2; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
-    .cam-box {{ border: 3px solid #4a90e2; border-radius: 15px; overflow: hidden; background: #000; }}
-    </style>
-    """, unsafe_allow_html=True)
+# --- 3. 页面路由 ---
 
-# --- 5. 核心逻辑：3分钟主动行为生成 ---
-elapsed = (datetime.now() - st.session_state.start_time).seconds
-if elapsed >= 180:
-    st.session_state.start_time = datetime.now()
-    recent_emotions = st.session_state.face_log[-10:] if st.session_state.face_log else ["平静"]
+# 【画面一：AI 实时监测主站】
+if st.session_state.current_page == "main":
+    st_autorefresh(interval=10000, key="bot_heartbeat") # 每10秒心跳
+    st.title("🤖 情绪观察者：多维监控中心")
     
-    with st.spinner("🤖 机器人正在整合三分钟多模态数据..."):
-        prompt = f"环境:{weather_now}。面部记录:{recent_emotions}。请主动生成一段100字内的关怀对话，并给出评分(0-1)。JSON:{{'text':'内容','score':float}}"
-        try:
-            resp = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": prompt}],
-                response_format={'type': 'json_object'}
-            )
-            data = json.loads(resp.choices[0].message.content)
-            st.session_state.chat_log.insert(0, {"t": datetime.now().strftime("%H:%M"), "msg": data['text']})
-            st.session_state.last_score = data['score']
-        except:
-            pass
+    # 自动变色逻辑
+    score = st.session_state.last_score
+    bg_color = f"hsl({200 - (score-0.5)*100}, 20%, 92%)"
+    st.markdown(f"<style>.stApp {{ background: {bg_color}; transition: all 2s; }}</style>", unsafe_allow_html=True)
 
-# --- 6. 界面布局 ---
-st.title("🤖 机器人主动感知终端")
-st.write(f"🌍 外部环境：**{weather_now}** | ⏳ 行为倒计时：**{180 - elapsed}s**")
+    # 1分钟总结决策
+    elapsed = (datetime.now() - st.session_state.start_time).seconds
+    if elapsed >= 60:
+        st.session_state.start_time = datetime.now()
+        with st.spinner("🔍 正在同步环境与生物数据..."):
+            prompt = f"环境:{env['desc']},{env['temp']}℃。面部:{st.session_state.face_log[-5:]}。请生成一句陪伴对话并打分(0-1)。JSON:{{'text':'内容','score':float}}"
+            try:
+                resp = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "system", "content": "你是一个观察细致的极客机器人"}, {"role": "user", "content": prompt}],
+                    response_format={'type': 'json_object'}
+                )
+                data = json.loads(resp.choices[0].message.content)
+                # 存入大数据档案
+                st.session_state.chat_log.insert(0, {
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "message": data['text'],
+                    "score": data['score'],
+                    "weather": env['desc'],
+                    "temp": env['temp']
+                })
+                st.session_state.last_score = data['score']
+            except: pass
 
-col_l, col_r = st.columns([1, 1.2])
+    col_v, col_c = st.columns([1, 1.2])
+    with col_v:
+        st.write("📷 **实时感知窗口**")
+        components.html("""<div style="border-radius:15px; overflow:hidden; border:2px solid #5C6BC0;"><video id="v" autoplay playsinline style="width:100%; transform:scaleX(-1);"></video></div>
+        <script>navigator.mediaDevices.getUserMedia({video:true}).then(s=>{document.getElementById('v').srcObject=s;});</script>""", height=240)
+        f = random.choice(["平静", "专注", "略显疲劳"])
+        st.session_state.face_log.append(f)
+        st.info(f"环境感知：{env['desc']} | {env['temp']}℃")
 
-with col_l:
-    st.subheader("📸 自动面部识别")
-    # 注入真正的摄像头视频流组件
-    components.html("""
-        <div class="cam-box">
-            <video id="v" autoplay playsinline style="width:100%; transform:scaleX(-1); display:block;"></video>
-            <div id="o" style="position:absolute; top:10px; left:10px; color:#0f0; font-family:monospace; font-size:12px; background:rgba(0,0,0,0.4);">[REC] BIOMETRIC TRACKING...</div>
-        </div>
-        <script>
-            navigator.mediaDevices.getUserMedia({video:true}).then(s=>{document.getElementById('v').srcObject=s;});
-        </script>
-    """, height=260)
+    with col_c:
+        st.write("💬 **观察者笔记**")
+        for chat in st.session_state.chat_log[:3]:
+            st.markdown(f"**[{chat['time']}]** {chat['message']}")
+        st.button("📈 进入大数据分析画面", use_container_width=True, on_click=lambda: navigate_to("stats"))
+
+# 【画面二：大数据相关性分析】
+elif st.session_state.current_page == "stats":
+    st.title("📊 大数据情感动力学档案")
     
-    # 模拟每10秒记录一次特征
-    current_feat = random.choice(["微蹙眉 (深思)", "面部放松 (平静)", "嘴角上扬 (愉悦)", "眼神游离 (疲倦)"])
-    st.session_state.face_log.append(current_feat)
-    st.info(f"🧬 当前生物特征：{current_feat}")
+    if st.session_state.chat_log:
+        df = pd.DataFrame(st.session_state.chat_log).iloc[::-1]
+        
+        # 1. 核心趋势图
+        st.write("### 📈 情感极性随时间波动趋势")
+        
+        st.line_chart(df.set_index("time")["score"])
+        
+        # 2. 创新点：天气相关性热力分析
+        st.divider()
+        st.write("### 🌦️ 环境因子相关性分析")
+        col1, col2 = st.columns(2)
+        
+        # 计算不同天气的平均心情
+        weather_analysis = df.groupby("weather")["score"].mean().reset_index()
+        col1.write("不同天气下的平均情绪值：")
+        col1.dataframe(weather_analysis)
+        
+        # 气温与心情的散点关联
+        col2.write("气温对情绪的影响分布：")
+        
+        st.scatter_chart(df, x="temp", y="score", color="weather")
+        
+        # 3. 机器人审计建议
+        avg_score = df["score"].mean()
+        advice = "系统检测到您的情绪受天气波动影响较小，心理韧性极佳。" if avg_score > 0.6 else "数据暗示低气压环境下您的能量值显著下降，建议增加室内光照。"
+        st.success(f"🤖 **大数据审计结论：** {advice}")
 
-with col_r:
-    st.subheader("💬 机器人主动生成")
-    if not st.session_state.chat_log:
-        st.write("机器人正在观察中，请稍候...")
-    for chat in st.session_state.chat_log[:3]:
-        st.markdown(f"""<div class="bot-card"><small>{chat['t']}</small><br>{chat['msg']}</div>""", unsafe_allow_html=True)
-    
-    # 手动干预
-    user_txt = st.text_input("如果有想说的话，也可以告诉我...")
-    if st.button("提交记录"): st.toast("数据已写入大数据模型")
+    else:
+        st.warning("数据池尚在构建中，请在主站等待至少1分钟。")
 
-# --- 7. 数据面板跳转 ---
-st.divider()
-if st.button("📈 查看大数据波动趋势", use_container_width=True):
-    st.session_state.current_page = "stats" # 假设你有这个页面逻辑
+    st.button("⬅️ 返回实时监控", on_click=lambda: navigate_to("main"))
