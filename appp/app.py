@@ -8,96 +8,138 @@ from datetime import datetime
 import random
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. 初始化与设置 ---
-st.set_page_config(page_title="Emo-Bot 深度监测", layout="wide")
+# --- 1. 初始化 (增加类型保护) ---
+st.set_page_config(page_title="Emo-Bot 旗舰版", layout="wide")
 
+# 确保所有变量都有正确的初始类型
 if "current_page" not in st.session_state: st.session_state.current_page = "main"
 if "face_log" not in st.session_state: st.session_state.face_log = []
 if "chat_log" not in st.session_state: st.session_state.chat_log = []
 if "start_time" not in st.session_state: st.session_state.start_time = datetime.now()
 if "last_metrics" not in st.session_state: 
-    st.session_state.last_metrics = {"happiness": 0.5, "stress": 0.2, "label": "系统待命"}
+    st.session_state.last_metrics = {"happiness": 0.5, "stress": 0.2, "label": "系统就绪", "message": "等待首次感应..."}
 
 st_autorefresh(interval=10000, key="bot_heartbeat")
-client = OpenAI(api_key=st.secrets["api_key"], base_url="https://api.deepseek.com")
 
-# --- 2. 增强版通知与样式引擎 ---
+# 安全初始化 OpenAI
+try:
+    client = OpenAI(api_key=st.secrets["api_key"], base_url="https://api.deepseek.com")
+except Exception as e:
+    st.error("API Key 未配置，请在 Secrets 中设置。")
+
+# --- 2. 增强版通知引擎与 CSS ---
 m = st.session_state.last_metrics
-# 动态计算 HSL 颜色：开心(120绿色/45金黄)，悲伤(210蓝色)，焦虑(280紫色)
-h_color = 200 - (m['happiness'] * 100) + (m['stress'] * 60)
-bg_style = f"hsl({h_color}, 25%, 94%)"
-
+# 颜色平滑处理
+h_val = 200 - (float(m.get('happiness', 0.5)) * 100)
 st.markdown(f"""
     <style>
-    .stApp {{ background: {bg_style}; transition: 3s; }}
+    .stApp {{ background: hsl({h_val}, 20%, 95%); transition: 3s; }}
     .video-container {{
-        width: 100%;
-        aspect-ratio: 4 / 3;
-        border: 4px solid #5C6BC0;
-        border-radius: 20px;
-        overflow: hidden;
-        background: #000;
-        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        width: 100%; aspect-ratio: 4 / 3;
+        border: 4px solid #5C6BC0; border-radius: 20px;
+        overflow: hidden; background: #000;
     }}
     video {{ width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }}
-    .bot-bubble {{ background: white; border-radius: 15px; padding: 18px; border-left: 6px solid #5C6BC0; margin-bottom: 12px; }}
+    .bot-bubble {{ background: white; border-radius: 15px; padding: 15px; border-left: 5px solid #5C6BC0; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }}
     </style>
     
     <script>
-    // 强制通知激活函数
+    // Mac 穿透式通知脚本
     window.parent.activateNotify = function() {{
-        if (!("Notification" in window)) {{
-            alert("此浏览器不支持桌面通知");
-            return;
-        }}
-        Notification.requestPermission().then(permission => {{
-            if (permission === "granted") {{
-                new Notification("通知已激活 ✅", {{ body: "现在我可以随时通过系统弹窗找你聊天了", icon: "https://cdn-icons-png.flaticon.com/512/204/204345.png" }});
-            }} else {{
-                alert("通知被屏蔽。请点击地址栏左侧的'锁头'图标手动开启。目前状态: " + permission);
-            }}
+        if (!("Notification" in window)) {{ alert("浏览器不支持通知"); return; }}
+        Notification.requestPermission().then(p => {{
+            alert("当前权限状态: " + p + " (若是 denied 请点锁头开启)");
+            if (p === "granted") new Notification("✅ 机器人连接成功");
         }});
     }};
-
-    window.parent.sendPush = function(title, body) {{
-        if (Notification.permission === 'granted') {{
-            new Notification(title, {{ body: body, icon: 'https://cdn-icons-png.flaticon.com/512/204/204345.png' }});
-        }}
+    window.parent.sendPush = function(t, b) {{
+        if (Notification.permission === 'granted') new Notification(t, {{body: b, icon: 'https://cdn-icons-png.flaticon.com/512/204/204345.png'}});
     }};
     </script>
 """, unsafe_allow_html=True)
 
-# --- 3. 页面逻辑路由 ---
+# --- 3. 页面逻辑 ---
 
 if st.session_state.current_page == "main":
-    st.title("🤖 机器人深度监测站")
+    st.title("🤖 机器人监测站")
     
-    # 顶部控制栏
-    c_btn1, c_btn2 = st.columns([1, 1])
-    with c_btn1:
-        if st.button("🔔 1. 激活 Mac 弹窗权限", use_container_width=True):
-            components.html("<script>window.parent.activateNotify();</script>", height=0)
+    # 顶部权限激活区
+    if st.button("🔔 第一步：激活 Mac 弹窗权限 (点击后请看系统提示)", use_container_width=True):
+        components.html("<script>window.parent.activateNotify();</script>", height=0)
 
-    # 1分钟主动决策
+    # 60秒总结逻辑 (增加异常捕获)
     elapsed = (datetime.now() - st.session_state.start_time).seconds
     if elapsed >= 60:
         st.session_state.start_time = datetime.now()
-        prompt = f"特征:{st.session_state.face_log[-6:]}。请识别开心、悲伤、焦虑或疲惫。JSON:{{'text':'暖心话','label':'情绪词','happiness':float,'stress':float}}"
-        try:
-            resp = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": "你是一个能够精准察觉人类微小情绪起伏的心理观察机器人。"}, {"role": "user", "content": prompt}],
-                response_format={'type': 'json_object'}
-            )
-            data = json.loads(resp.choices[0].message.content)
-            record = {"time": datetime.now().strftime("%H:%M"), "message": data['text'], "label": data['label'], "happiness": data['happiness'], "stress": data['stress']}
-            st.session_state.chat_log.insert(0, record)
-            st.session_state.last_metrics = record
-            
-            # 触发弹窗
-            push_script = f"<script>window.parent.sendPush('观察者：{data['label']}', '{data['text']}');</script>"
-            components.html(push_script, height=0)
-        except: pass
+        with st.spinner("正在解析情绪..."):
+            try:
+                prompt = f"特征:{st.session_state.face_log[-6:]}。JSON:{{'text':'暖心话','label':'情绪词','happiness':0.5,'stress':0.2}}"
+                resp = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={'type': 'json_object'}
+                )
+                res_content = resp.choices[0].message.content
+                if res_content:
+                    data = json.loads(res_content)
+                    # 关键修复：确保所有键值对都存在，避免 TypeError
+                    new_record = {
+                        "time": datetime.now().strftime("%H:%M"),
+                        "message": data.get("text", "我在听..."),
+                        "label": data.get("label", "情绪平稳"),
+                        "happiness": float(data.get("happiness", 0.5)),
+                        "stress": float(data.get("stress", 0.2))
+                    }
+                    st.session_state.chat_log.insert(0, new_record)
+                    st.session_state.last_metrics = new_record
+                    
+                    # 发送推送
+                    js_code = f"<script>window.parent.sendPush('观察者：{new_record['label']}', '{new_record['message']}');</script>"
+                    components.html(js_code, height=0)
+            except Exception as e:
+                st.warning(f"感应器稍有波动，正在重试...")
 
-    # 左右布局
-    col_l, col_r = st
+    # 布局渲染
+    l, r = st.columns([1, 1.2])
+    with l:
+        st.subheader("📸 实时画面")
+        components.html("""
+            <div class="video-container"><video id="v" autoplay playsinline></video></div>
+            <script>navigator.mediaDevices.getUserMedia({video: {aspectRatio: 1.333}}).then(s => {document.getElementById('v').srcObject = s;});</script>
+        """, height=300)
+        # 模拟特征采集
+        feats = ["专注", "平和", "略显疲惫", "若有所思"]
+        current_f = random.choice(feats)
+        st.session_state.face_log.append(current_f)
+        st.info(f"🧬 特征流：{current_f} | 状态：{st.session_state.last_metrics.get('label', '就绪')}")
+
+    with r:
+        st.subheader("💬 对话记录")
+        # 安全遍历，防止 KeyError/TypeError
+        display_log = st.session_state.chat_log[:4]
+        if not display_log:
+            st.write("等待数据收集中...")
+        for chat in display_log:
+            st.markdown(f"""
+                <div class="bot-bubble">
+                    <small>{chat.get('time', '--:--')}</small> <b>{chat.get('label', '分析中')}</b><br>
+                    {chat.get('message', '...')}
+                </div>
+            """, unsafe_allow_html=True)
+        
+        if st.button("📊 查看数据波动", use_container_width=True):
+            st.session_state.current_page = "stats"
+            st.rerun()
+
+elif st.session_state.current_page == "stats":
+    st.title("📊 情感大数据")
+    if st.session_state.chat_log:
+        df = pd.DataFrame(st.session_state.chat_log).iloc[::-1]
+        st.line_chart(df.set_index("time")[["happiness", "stress"]])
+        st.dataframe(df[["time", "label", "message"]], use_container_width=True)
+    else:
+        st.warning("尚无充足数据进行波动分析。")
+    
+    if st.button("⬅️ 返回主页", use_container_width=True):
+        st.session_state.current_page = "main"
+        st.rerun()
