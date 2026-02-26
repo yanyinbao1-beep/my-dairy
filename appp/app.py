@@ -5,7 +5,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
-
+import random  # <--- 确保加上这一行
 # --- 1. 自动刷新配置：每 10 秒刷新一次界面以保持感知，每 180 秒执行一次大总结 ---
 # 逻辑：每 10 秒刷新同步一次面部数据，计数达到 18 次（3分钟）触发 AI 对话
 refresh_count = st_autorefresh(interval=10000, key="sensing_loop")
