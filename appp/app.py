@@ -90,7 +90,7 @@ if "current_text" not in st.session_state:
     st.session_state.current_text = ""
 
 # --- 3. 页面内容 ---
-st.markdown('<h1 class="main-title">📓 墨痕 AI 随笔监控</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-title">📓 你的日记本</h1>', unsafe_allow_html=True)
 
 # 布局：左(输入) 右(监控)
 col_left, col_right = st.columns([1.2, 0.8], gap="large")
