@@ -8,30 +8,40 @@ from datetime import datetime
 import random
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. 页面配置 ---
-st.set_page_config(page_title="Emo-Bot 深度情感监测", layout="wide")
+# --- 1. 全局配置 ---
+st.set_page_config(page_title="EMO-Robot 深度情感终端", layout="wide")
 
+# 初始化 Session State
 if "current_page" not in st.session_state: st.session_state.current_page = "main"
 if "face_log" not in st.session_state: st.session_state.face_log = []
 if "chat_log" not in st.session_state: st.session_state.chat_log = []
 if "start_time" not in st.session_state: st.session_state.start_time = datetime.now()
 if "last_metrics" not in st.session_state: 
-    st.session_state.last_metrics = {"happiness": 0.5, "energy": 0.5, "stress": 0.2, "label": "系统初始化"}
+    st.session_state.last_metrics = {
+        "happiness": 0.5, "energy": 0.5, "stress": 0.2, "label": "系统待命"
+    }
 
-# 自动刷新器 (10秒心跳)
+# 心跳刷新（10秒）
 st_autorefresh(interval=10000, key="bot_heartbeat")
 
+# 配置 OpenAI (DeepSeek)
 client = OpenAI(api_key=st.secrets["api_key"], base_url="https://api.deepseek.com")
 
-# --- 2. 注入通知引擎、锁定比例 CSS 与机器人图标 ---
+# --- 2. 核心：动态颜色与 UI 优化 ---
 m = st.session_state.last_metrics
-# 动态背景色逻辑
-bg_color = f"hsl({200 - (m['happiness']-0.5)*120}, {20 + m['stress']*30}%, {92 - m['stress']*10}%)"
+
+# 颜色心理学插值：
+# 基础色调：开心->金黄(45), 悲伤->冷蓝(220), 焦虑->紫灰(280)
+h = 220 - (m['happiness'] * 100) + (m['stress'] * 60)
+s = 15 + (m['energy'] * 20)
+l = 95 - (m['stress'] * 10)
 
 st.markdown(f"""
     <style>
-    .stApp {{ background: {bg_color}; transition: all 3s ease; }}
-    /* 锁定 4:3 摄像头比例 */
+    .stApp {{
+        background: hsl({h}, {s}%, {l}%);
+        transition: background 3.0s ease-in-out;
+    }}
     .video-container {{
         width: 100%;
         aspect-ratio: 4 / 3;
@@ -39,67 +49,81 @@ st.markdown(f"""
         border-radius: 20px;
         overflow: hidden;
         background: #000;
-        position: relative;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
     }}
-    video {{
-        width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);
+    video {{ width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }}
+    .bot-bubble {{
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 18px;
+        padding: 18px;
+        margin-bottom: 15px;
+        border-left: 6px solid #5C6BC0;
+        box-shadow: 2px 4px 12px rgba(0,0,0,0.05);
     }}
-    .bot-bubble {{ 
-        background: rgba(255,255,255,0.9); border-radius: 15px; 
-        padding: 15px; margin-bottom: 12px; border-left: 6px solid #5C6BC0;
-        font-size: 15px; line-height: 1.5;
-    }}
+    .metric-text {{ font-weight: bold; color: #5C6BC0; }}
     </style>
     
     <script>
-    // 权限请求与通知函数
     if (Notification.permission !== 'granted') {{ Notification.requestPermission(); }}
     window.sendBotNotification = function(title, message) {{
         if (Notification.permission === 'granted') {{
             new Notification(title, {{
                 body: message,
-                icon: 'https://cdn-icons-png.flaticon.com/512/204/204345.png' // 可爱的机器人图标
+                icon: 'https://cdn-icons-png.flaticon.com/512/204/204345.png'
             }});
         }}
     }}
     </script>
 """, unsafe_allow_html=True)
 
-# --- 3. 核心行为生成逻辑 (增强情绪具体性) ---
+# --- 3. 路由逻辑 ---
 
 if st.session_state.current_page == "main":
-    st.title("🤖 深度情感机器人监控终端")
+    st.title("🤖 深度情感监测终端")
     
+    # 60秒行为生成循环
     elapsed = (datetime.now() - st.session_state.start_time).seconds
     if elapsed >= 60:
         st.session_state.start_time = datetime.now()
-        with st.spinner("🔍 机器人正在分析你的开心、悲伤与压力指标..."):
-            # 强化 Prompt：明确要求分析开心/悲伤/焦虑/疲惫
+        with st.spinner("🔍 观察者正在读取多维情感特征..."):
             prompt = f"""
             面部特征序列:{st.session_state.face_log[-6:]}。
-            请作为专业心理观察机器人，详细分析用户的开心、悲伤、焦虑或疲惫感。
-            要求返回JSON：
-            1. text: 针对捕捉到的情绪(如：看出了你隐藏的悲伤或由衷的开心)给出一段暖心对话。
-            2. label: 具体的情绪描述词（如：沉静的哀伤、明亮的愉悦、紧绷的焦虑）。
-            3. happiness, energy, stress: 0.0-1.0 之间的分值。
+            分析用户的开心、悲伤、焦虑、疲惫程度。
+            返回JSON：{{
+                "text": "一段极具共情力的暖心谈话",
+                "label": "如：平静的微光、隐秘的焦虑、明亮的愉悦",
+                "happiness": 0.0-1.0, 
+                "energy": 0.0-1.0, 
+                "stress": 0.0-1.0
+            }}
             """
             try:
                 resp = client.chat.completions.create(
                     model="deepseek-chat",
-                    messages=[{"role": "system", "content": "你是一个能够精准识别开心、悲伤等多模态情绪的机器人助手"}, {"role": "user", "content": prompt}],
+                    messages=[{"role": "system", "content": "你是一个能够精准感知开心、悲伤、压力等情绪并给出反馈的AI助手"}, {"role": "user", "content": prompt}],
                     response_format={'type': 'json_object'}
                 )
                 data = json.loads(resp.choices[0].message.content)
-                st.session_state.last_metrics = data
-                st.session_state.chat_log.insert(0, {"time": datetime.now().strftime("%H:%M"), **data})
                 
-                # --- 后台通知触发 ---
-                notif_js = f"<script>window.parent.sendBotNotification('机器人观察：{data['label']}', '{data['text']}');</script>"
+                # 数据对齐：统一存入 message 键
+                record = {
+                    "time": datetime.now().strftime("%H:%M"),
+                    "message": data.get("text", "感知中断，正在重连..."),
+                    "label": data.get("label", "状态不明"),
+                    "happiness": data.get("happiness", 0.5),
+                    "energy": data.get("energy", 0.5),
+                    "stress": data.get("stress", 0.2)
+                }
+                st.session_state.last_metrics = record
+                st.session_state.chat_log.insert(0, record)
+                
+                # 发送系统通知
+                notif_js = f"<script>window.parent.sendBotNotification('机器人观察：{record['label']}', '{record['message']}');</script>"
                 components.html(notif_js, height=0)
-            except: pass
+            except Exception as e:
+                st.error(f"感知同步错误")
 
-    # --- 布局 ---
+    # 布局
     col_v, col_c = st.columns([1, 1.2])
     
     with col_v:
@@ -114,43 +138,59 @@ if st.session_state.current_page == "main":
             </script>
         """, height=320)
         
-        f = random.choice(["嘴角微微上扬 (开心?)", "眼神略显空洞 (忧郁?)", "眉心轻微收缩 (压力?)", "频繁眨眼 (疲惫?)"])
+        # 记录特征
+        f = random.choice(["视线稳定 (专注中)", "嘴角微动 (情绪起伏)", "眉心放松 (压力降低)", "频繁眨眼 (略显疲态)"])
         st.session_state.face_log.append(f)
-        st.info(f"🧬 生物特征捕捉：{f}")
-        st.metric("核心情绪判定", st.session_state.last_metrics['label'])
+        st.write(f"🧬 **捕获特征：** {f}")
+        st.metric("核心判定", st.session_state.last_metrics['label'])
 
     with col_c:
         st.subheader("💬 主动关怀日志")
         if not st.session_state.chat_log:
-            st.write("机器人正在建立你的情感档案，请稍候...")
+            st.info("正在建立情感档案，请保持前台开启一分钟...")
         for chat in st.session_state.chat_log[:4]:
             st.markdown(f"""
                 <div class="bot-bubble">
-                    <small style="color:#666;">[{chat['time']}] 判定状态：{chat['label']}</small><br>
+                    <small style="color:#666;">[{chat['time']}] <b>{chat['label']}</b></small><br>
                     {chat['message']}
                 </div>
             """, unsafe_allow_html=True)
         
-        st.divider()
-        if st.button("📊 进入多维大数据看板", use_container_width=True):
+        if st.button("📈 展开多维大数据看板", use_container_width=True):
             st.session_state.current_page = "stats"
             st.rerun()
 
 elif st.session_state.current_page == "stats":
-    st.title("📊 多维情感大数据看板")
+    st.title("📊 情感动力学大数据看板")
+    
     if st.session_state.chat_log:
         df = pd.DataFrame(st.session_state.chat_log).iloc[::-1]
         
-        st.write("### 📉 情绪曲线 (包含开心与压力维度)")
-        st.line_chart(df.set_index("time")[["happiness", "energy", "stress"]])
+        # 1. 优化颜色的折线图
+        st.write("### 📉 三维情绪波动走势")
+        # 为图表准备漂亮的数据
+        chart_data = df.set_index("time")[["happiness", "energy", "stress"]]
+        chart_data.columns = ["愉悦度(Happiness)", "激活度(Energy)", "压力值(Stress)"]
+        st.line_chart(chart_data, color=["#4CAF50", "#FF9800", "#9C27B0"]) 
         
-        st.write("### 🌌 情感分布散点图")
+        # 2. 情感坐标分析
+        st.divider()
+        st.write("### 🌌 情感象限分布")
+        
         st.scatter_chart(df, x="happiness", y="stress", color="label", size="energy")
         
-        st.write("### 📄 原始决策数据表")
-        st.dataframe(df[["time", "label", "message"]], use_container_width=True)
+        # 3. 数据表
+        st.write("### 📄 历史审计清单")
+        st.dataframe(df[["time", "label", "message", "happiness", "stress"]], use_container_width=True)
         
-        # 导出功能
-        st.download_button("📥 导出我的情感大数据报告 (CSV)", df.to_csv(index=False).encode('utf-8-sig'), "emo_report.csv", "text/csv")
+        st.download_button(
+            "📥 下载大数据报表 (Excel/CSV兼容)", 
+            df.to_csv(index=False).encode('utf-8-sig'), 
+            "emo_pro_report.csv", "text/csv"
+        )
+    else:
+        st.warning("暂无历史样本，请返回主站等待首轮分析生成。")
 
-    st.button("⬅️ 返回实时监控终端", on_click=lambda: st.session_state.update({"current_page":"main"}))
+    if st.button("⬅️ 返回感知终端", use_container_width=True):
+        st.session_state.current_page = "main"
+        st.rerun()
