@@ -98,7 +98,7 @@ with col_input:
         if diary_text:
             with st.spinner("正在捕捉你的心情小怪兽..."):
                 try:
-                    prompt = "分析情绪，返回JSON: {'score':0-1, 'mood':'超级可爱的词', 'advice':'给小朋友的治愈短建议'}"
+                    prompt = "分析情绪，返回JSON: {'score':0-1, 'mood':'超级可爱的词', 'advice':'建议'}"
                     response = client.chat.completions.create(
                         model="deepseek-chat",
                         messages=[{"role": "system", "content": prompt}, {"role": "user", "content": diary_text}],
