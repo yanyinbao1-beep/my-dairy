@@ -1,7 +1,5 @@
 streamlit
 streamlit-autorefresh
-streamlit-javascript
 openai
 pandas
 requests
-streamlit-autorefresh
