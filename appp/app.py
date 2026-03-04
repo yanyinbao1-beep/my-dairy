@@ -25,7 +25,7 @@ if "last_metrics" not in st.session_state:
         "weather": "定位中...", "temp": "--", "message": "初始化神经网络..."
     }
 
-# --- 2. 封面动图界面 ---
+# --- 2. 封面动图界面 (保持原封不动) ---
 if not st.session_state.welcome_finished:
     st.markdown("""
         <style>
@@ -105,7 +105,7 @@ else:
         with t1: st.title("🤖 深度监测主控台")
         with t2: st.info(f"📍 {current_weather}  🌡️ {current_temp}℃")
 
-        # 分析逻辑
+        # 每60秒AI分析
         elapsed = (datetime.now() - st.session_state.start_time).seconds
         if elapsed >= 60:
             st.session_state.start_time = datetime.now()
@@ -117,11 +117,11 @@ else:
                 st.session_state.chat_log.insert(0, record); st.session_state.last_metrics = record
             except: pass
 
-        # 核心布局 [4:6 比例]
+        # 核心布局
         col_v, col_i = st.columns([4, 6])
         with col_v:
-            st.subheader("📸 生物特征采集 (✌️跳转)")
-            # 嵌入带有 21 节点追踪和✌️手势识别的 MediaPipe
+            st.subheader("📸 生物特征采集 (比✌️跳转)")
+            # 升级后的视频组件：21节点绘制 + ✌️手势跳转逻辑
             
             components.html("""
                 <div class="video-container">
@@ -143,14 +143,13 @@ else:
                         ctx.clearRect(0, 0, canvas.width, canvas.height);
                         if (results.multiHandLandmarks) {
                             for (const landmarks of results.multiHandLandmarks) {
-                                // 绘制骨架连线 (绿色)
+                                // 绘制21节点骨架 (绿线红点)
                                 drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
-                                // 绘制 21 个红色节点
                                 drawLandmarks(ctx, landmarks, {color: '#FF0000', radius: 3});
                                 
-                                // ✌️ 手势识别算法: 食指(8)和中指(12)高度高于关节(6,10)，无名指(16)收拢
+                                // ✌️判定: 食指(8)和中指(12)伸直，无名指(16)收缩
                                 if (landmarks[8].y < landmarks[6].y && landmarks[12].y < landmarks[10].y && landmarks[16].y > landmarks[14].y) {
-                                    // 触发 Python 端的主按钮
+                                    // 找到并模拟点击 Python 的主按钮 (primary)
                                     window.parent.document.querySelector('button[kind="primary"]').click();
                                 }
                             }
@@ -159,7 +158,7 @@ else:
                     }
 
                     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-                    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
+                    hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
                     hands.onResults(onResults);
 
                     const camera = new Camera(video, {
@@ -179,8 +178,8 @@ else:
                 <div style='border-top:1px solid #eee; padding-top:15px; font-style:italic;'>"{cur.get('message')}"</div>
             </div>""", unsafe_allow_html=True)
             
-            # 按钮作为手势跳转的锚点
-            if st.button("📈 进入大数据分析看板", type="primary", use_container_width=True):
+            # 手势跳转的核心锚点 (设为 primary 供 JS 识别)
+            if st.button("📈 进入大数据分析看板", use_container_width=True, type="primary"):
                 st.session_state.current_page = "stats"
                 st.rerun()
 
@@ -197,4 +196,6 @@ else:
         else:
             st.warning("数据收集中...")
         
-        st.button("⬅️ 返回主控台", use_container_width=True, on_click=lambda: st.session_state.update({"current_page":"main"}))
+        if st.button("⬅️ 返回主控台", use_container_width=True):
+            st.session_state.update({"current_page":"main"})
+            st.rerun()
