@@ -1,191 +1,188 @@
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
-import json, requests, pandas as pd
+import json
+import requests
+import pandas as pd
 from datetime import datetime
+import random
 import time
+from streamlit_autorefresh import st_autorefresh
 
-# --- 1. 核心配置与状态初始化 ---
+# --- 1. 基础配置 ---
 st.set_page_config(page_title="Emo-Bot Pro", layout="wide", initial_sidebar_state="collapsed")
 
-# 必须初始化的状态变量
-init_states = {
-    "booted": False,
-    "current_page": "main",
-    "chat_log": [],  # 存储所有历史分析记录
-    "env_data": {"city": "定位中", "temp": "20"},
-    "mood_score": 0.5, # 0: 忧郁蓝, 1: 活力橙
-    "last_ana_time": 0, # 用于实现每分钟自动分析
-    "ai_result": {"label": "感知中", "analysis": "系统初始化...", "advice": "准备开启监测"}
-}
-for key, val in init_states.items():
-    if key not in st.session_state: st.session_state[key] = val
+# 初始化状态
+if "welcome_finished" not in st.session_state:
+    st.session_state.welcome_finished = False
+if "current_page" not in st.session_state: st.session_state.current_page = "main"
+if "chat_log" not in st.session_state: st.session_state.chat_log = []
+if "face_log" not in st.session_state: st.session_state.face_log = []
+if "start_time" not in st.session_state: st.session_state.start_time = datetime.now()
+if "last_metrics" not in st.session_state: 
+    st.session_state.last_metrics = {
+        "label": "同步中", "happiness": 0.5, "stress": 0.2, 
+        "weather": "定位中...", "temp": "--", "message": "初始化神经网络..."
+    }
 
-# --- 2. 动态主题引擎 (颜色随心情自动同步) ---
-# 根据 mood_score (0.0~1.0) 计算 HSL 色相 (220 蓝 -> 40 橙)
-hue = 220 - (st.session_state.mood_score * 180)
-main_color = f"hsla({hue}, 75%, 60%, 1)"
-bg_gradient = f"radial-gradient(circle at 50% 50%, hsla({hue}, 45%, 12%, 1) 0%, #0a1118 100%)"
-
-st.markdown(f"""
-    <style>
-    .stApp {{ background: {bg_gradient}; color: white; transition: background 2s ease; }}
-    .glass-card {{
-        background: rgba(255, 255, 255, 0.03); border: 1px solid {main_color}44;
-        border-radius: 20px; padding: 25px; backdrop-filter: blur(12px);
-        box-shadow: 0 10px 40px rgba(0,0,0,0.5); margin-bottom: 20px;
-    }}
-    .advice-tag {{
-        background: {main_color}15; border-left: 4px solid {main_col} !important;
-        padding: 15px; margin-top: 15px; border-radius: 8px; font-style: italic;
-    }}
-    /* 动态扫描封面 */
-    #loader {{
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: #0a1118; display: flex; flex-direction: column;
-        align-items: center; justify-content: center; z-index: 9999;
-    }}
-    .scanner-bar {{
-        width: 300px; height: 2px; background: {main_color};
-        box-shadow: 0 0 20px {main_color}; animation: scanMove 2.5s infinite ease-in-out;
-    }}
-    @keyframes scanMove {{ 0%, 100% {{ transform: translateY(-50px); }} 50% {{ transform: translateY(50px); }} }}
-    </style>
-""", unsafe_allow_html=True)
-
-# --- 3. 定位、天气与 AI 自动化逻辑 ---
-def sync_env_data():
-    """获取定位与天气，失败则兜底"""
-    try:
-        r = requests.get("https://ipapi.co/json/", timeout=2.5).json()
-        city = r.get("city", "上海")
-        w = requests.get(f"https://api.open-meteo.com/v1/forecast?latitude={r.get('latitude',31)}&longitude={r.get('longitude',121)}&current_weather=true").json()
-        st.session_state.env_data = {"city": city, "temp": str(w['current_weather']['temperature'])}
-    except:
-        st.session_state.env_data = {"city": "北京", "temp": "18"}
-
-def perform_auto_ai_analysis():
-    """核心：每隔 60 秒自动触发 AI 分析并记录"""
-    current_time = time.time()
-    if current_time - st.session_state.last_ana_time >= 60:
-        if "api_key" not in st.secrets: return # 无 Key 则跳过
-        client = OpenAI(api_key=st.secrets["api_key"], base_url="https://api.deepseek.com")
-        try:
-            prompt = f"城市：{st.session_state.env_data['city']}，气温：{st.session_state.env_data['temp']}°C。请作为暖心伴侣，根据此时的环境提供：1. 四字表情标签；2. 30字情绪画像；3. 一句结合天气的暖心关怀建议。JSON格式返回：{{'label':'','text':'','adv':'','score':0.0-1.0}}"
-            r = client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}], response_format={'type':'json_object'})
-            data = json.loads(r.choices[0].message.content)
-            
-            # 更新实时状态
-            st.session_state.ai_result = {"label": data['label'], "analysis": data['text'], "advice": data['adv']}
-            st.session_state.mood_score = data['score']
-            st.session_state.last_ana_time = current_time
-            
-            # 记录历史数据（用于图表生成）
-            st.session_state.chat_log.append({
-                "时间": datetime.now().strftime("%H:%M:%S"),
-                "情绪状态": data['label'],
-                "AI 分析": data['text'],
-                "气温": f"{st.session_state.env_data['temp']}°C",
-                "心情得分": data['score']
-            })
-        except: pass
-
-# --- 4. 动态启动封面 ---
-if not st.session_state.booted:
-    ph = st.empty()
-    with ph.container():
-        st.markdown(f'<div id="loader"><div class="scanner-bar"></div><h3 style="color:{main_color};margin-top:20px;letter-spacing:4px;">EMO-BOT INITIALIZING</h3></div>', unsafe_allow_html=True)
-        sync_env_data()
-        time.sleep(2.5)
-    st.session_state.booted = True
+# --- 2. 封面界面 ---
+if not st.session_state.welcome_finished:
+    st.markdown("""
+        <style>
+        .stApp { background: #0a0c10; }
+        .welcome-box { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 85vh; }
+        .loader {
+            width: 120px; height: 120px;
+            border: 4px solid #1a1f2b; border-top: 4px solid #5C6BC0;
+            border-radius: 50%;
+            animation: spin 1s linear infinite, glow 2s ease-in-out infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes glow { 0%, 100% { box-shadow: 0 0 15px #5C6BC0; } 50% { box-shadow: 0 0 40px #5C6BC0; } }
+        .text { margin-top: 40px; color: #5C6BC0; font-family: monospace; letter-spacing: 8px; font-size: 18px; }
+        </style>
+        <div class="welcome-box">
+            <div class="loader"></div>
+            <div class="text">EMO-BOT INITIALIZING</div>
+        </div>
+    """, unsafe_allow_html=True)
+    time.sleep(2.5) 
+    st.session_state.welcome_finished = True
     st.rerun()
 
-# 每次渲染都尝试检查是否需要自动分析
-perform_auto_ai_analysis()
+# --- 3. 核心功能逻辑 ---
+else:
+    st_autorefresh(interval=10000, key="bot_heartbeat")
+    client = OpenAI(api_key=st.secrets["api_key"], base_url="https://api.deepseek.com")
 
-# --- 5. 主界面路由渲染 ---
-if st.session_state.current_page == "main":
-    st.write(f"📍 {st.session_state.env_data['city']} | 🌡️ {st.session_state.env_data['temp']}°C")
-    
-    col_l, col_r = st.columns([1.3, 0.7])
-    
-    with col_l:
-        st.subheader("📸 21-Node 实时监测 (比✌️跳转)")
-        # 强制绘制节点与连线
-        components.html(f"""
-            <div style="position:relative; width:100%; aspect-ratio:4/3; background:#000; border-radius:20px; border:2px solid {main_color}; overflow:hidden;">
-                <video id="v" style="width:100%; height:100%; object-fit:cover; transform:scaleX(-1);" autoplay playsinline></video>
-                <canvas id="c" style="position:absolute; top:0; left:0; width:100%; height:100%; transform:scaleX(-1);"></canvas>
-            </div>
-            <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-            <script>
-                const v=document.getElementById('v'), c=document.getElementById('c'), ctx=c.getContext('2d');
-                const hands=new Hands({{locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${{f}}`}});
-                hands.setOptions({{maxNumHands:1, minDetectionConfidence:0.6}});
-                hands.onResults((res)=>{{
-                    ctx.clearRect(0,0,c.width,c.height);
-                    if(res.multiHandLandmarks){{
-                        for(const lm of res.multiHandLandmarks){{
-                            drawConnectors(ctx, lm, HAND_CONNECTIONS, {{color:'#00FF00', lineWidth:2}});
-                            drawLandmarks(ctx, lm, {{color:'#FF0000', radius:3}});
-                            // ✌️ 手势跳转判定
-                            if(lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y > lm[14].y) {{
-                                window.parent.document.querySelector('button[kind="primary"]').click();
-                            }}
-                        }}
-                    }}
-                }});
-                new Camera(v,{{onFrame:async()=>{{c.width=v.videoWidth; c.height=v.videoHeight; await hands.send({{image:v}});}}}}).start();
-            </script>
-        """, height=440)
-        
-        # 隐藏但可被 JS 触发的按钮
-        if st.button("📈 进入情绪趋势大屏", type="primary", use_container_width=True):
-            st.session_state.current_page = "stats"
-            st.rerun()
+    @st.cache_data(ttl=1800)
+    def get_context_data():
+        try:
+            geo = requests.get("http://ip-api.com/json/", timeout=3).json()
+            city = geo.get("city", "未知地区")
+            w_url = f"https://api.open-meteo.com/v1/forecast?latitude={geo.get('lat',39.9)}&longitude={geo.get('lon',116.4)}&current_weather=true"
+            w_res = requests.get(w_url, timeout=3).json()
+            temp = w_res['current_weather']['temperature']
+            w_map = {0: "晴朗", 1: "微云", 2: "多云", 3: "阴天", 61: "雨", 95: "雷阵雨"}
+            return f"{city} | {w_map.get(w_res['current_weather']['weathercode'], '多云')}", temp
+        except: return "本地环境", 25.0
 
-    with col_r:
-        st.subheader("🤖 每分钟自动诊断")
-        st.markdown(f"""
-            <div class="glass-card">
-                <small style="opacity:0.6;">最后同步: {datetime.now().strftime("%H:%M:%S")}</small>
-                <h2 style="color:{main_color}; margin:10px 0;">{st.session_state.ai_result['label']}</h2>
-                <p style="font-size:1em; line-height:1.6;">{st.session_state.ai_result['analysis']}</p>
-                <div class="advice-tag">
-                    <b>💡 暖心关怀：</b><br>{st.session_state.ai_result['advice']}
+    current_weather, current_temp = get_context_data()
+
+    # 动态 UI 样式
+    m = st.session_state.last_metrics
+    h_val = 210 - (float(m.get('happiness', 0.5)) * 100)
+    st.markdown(f"""
+        <style>
+        .stApp {{ background: hsl({h_val}, 15%, 96%); transition: 3s ease; }}
+        .video-container {{
+            position: relative; width: 100%; max-width: 480px; aspect-ratio: 4/3;
+            border: 3px solid #5C6BC0; border-radius: 20px;
+            overflow: hidden; background: #000; margin: 0 auto;
+        }}
+        canvas {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); }}
+        video {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }}
+        .status-card {{
+            background: white; border-radius: 20px; padding: 25px;
+            border-left: 10px solid hsl({h_val}, 60%, 50%);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+        }}
+        </style>
+    """, unsafe_allow_html=True)
+
+    if st.session_state.current_page == "main":
+        t1, t2 = st.columns([3, 1])
+        with t1: st.title("🤖 深度监测主控台")
+        with t2: st.info(f"📍 {current_weather}  🌡️ {current_temp}℃")
+
+        # 每 60 秒自动 AI 分析
+        elapsed = (datetime.now() - st.session_state.start_time).seconds
+        if elapsed >= 60:
+            st.session_state.start_time = datetime.now()
+            try:
+                prompt = f"环境:{current_weather}. JSON:{{'label':'标签','text':'暖心话','happiness':0.5,'stress':0.2}}"
+                resp = client.chat.completions.create(model="deepseek-chat", messages=[{"role": "user", "content": prompt}], response_format={'type': 'json_object'})
+                data = json.loads(resp.choices[0].message.content)
+                record = {"time": datetime.now().strftime("%H:%M"), "label": data.get("label"), "message": data.get("text"), "happiness": float(data.get("happiness", 0.5)), "stress": float(data.get("stress", 0.2)), "weather": current_weather, "temp": current_temp}
+                st.session_state.chat_log.insert(0, record); st.session_state.last_metrics = record
+            except: pass
+
+        # 核心布局
+        col_v, col_i = st.columns([4, 6])
+        with col_v:
+            st.subheader("📸 生物特征采集 (比✌️跳转)")
+            # 集成 MediaPipe Hands
+            components.html("""
+                <div class="video-container">
+                    <video id="input_video" autoplay playsinline></video>
+                    <canvas id="output_canvas"></canvas>
                 </div>
-                <div style="margin-top:25px;">
-                    <small>实时情绪能量 (分数: {st.session_state.mood_score})</small>
-                    <div style="width:100%; height:6px; background:rgba(255,255,255,0.05); border-radius:10px; margin-top:8px;">
-                        <div style="width:{st.session_state.mood_score*100}%; height:100%; background:{main_color}; box-shadow:0 0 10px {main_color}; transition: 2s;"></div>
-                    </div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-        if st.button("🔄 手动刷新感官"):
-            st.session_state.last_ana_time = 0 
-            st.rerun()
+                <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+                <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+                <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+                <script>
+                    const videoElement = document.getElementById('input_video');
+                    const canvasElement = document.getElementById('output_canvas');
+                    const canvasCtx = canvasElement.getContext('2d');
 
-# --- 6. 趋势图表与历史记录页面 ---
-elif st.session_state.current_page == "stats":
-    st.title("📈 情绪历史报告与趋势图表")
-    if st.button("⬅️ 返回实况监测台"):
-        st.session_state.current_page = "main"
-        st.rerun()
-    
-    if st.session_state.chat_log:
-        df = pd.DataFrame(st.session_state.chat_log)
+                    function onResults(results) {
+                        canvasCtx.save();
+                        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+                        if (results.multiHandLandmarks) {
+                            for (const landmarks of results.multiHandLandmarks) {
+                                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+                                drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
+                                
+                                // ✌️判定逻辑: 食指(8)和中指(12)伸直，无名指(16)收缩
+                                if (landmarks[8].y < landmarks[6].y && landmarks[12].y < landmarks[10].y && landmarks[16].y > landmarks[14].y) {
+                                    window.parent.document.querySelector('button[kind="primary"]').click();
+                                }
+                            }
+                        }
+                        canvasCtx.restore();
+                    }
+
+                    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+                    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                    hands.onResults(onResults);
+
+                    const camera = new Camera(videoElement, {
+                        onFrame: async () => {
+                            canvasElement.width = videoElement.videoWidth;
+                            canvasElement.height = videoElement.videoHeight;
+                            await hands.send({image: videoElement});
+                        }
+                    });
+                    camera.start();
+                </script>
+            """, height=380)
+            
+        with col_i:
+            st.subheader("📊 实时推演")
+            cur = st.session_state.last_metrics
+            st.markdown(f"""<div class='status-card'>
+                <small style='color:#888'>最近一次分析：</small>
+                <h2 style='color:#1A237E; margin: 10px 0;'>{cur.get('label')}</h2>
+                <div style='border-top:1px solid #eee; padding-top:15px; font-style:italic;'>"{cur.get('message')}"</div>
+            </div>""", unsafe_allow_html=True)
+            
+            # 手势判定实际上就是触发这个 primary 按钮
+            if st.button("📈 进入大数据分析看板", type="primary", use_container_width=True):
+                st.session_state.current_page = "stats"; st.rerun()
+
+    elif st.session_state.current_page == "stats":
+        st.title("📊 情感与环境大数据分析")
+        if st.session_state.chat_log:
+            df = pd.DataFrame(st.session_state.chat_log).iloc[::-1]
+            st.write("### 📉 情绪走势图")
+            st.line_chart(df.set_index("time")[["happiness", "stress"]])
+            
+            st.write("### 📑 历史详细记录")
+            st.dataframe(df[["time", "label", "weather", "temp", "happiness", "message"]], use_container_width=True, 
+                column_config={"happiness": st.column_config.ProgressColumn("愉悦度", min_value=0, max_value=1), "message": "深度建议"})
+        else:
+            st.warning("数据收集中...")
         
-        # 数据可视化：情绪趋势图表
-        st.subheader("📊 心情波动曲线")
-        # 准备图表数据
-        chart_data = df[["时间", "心情得分"]].set_index("时间")
-        st.line_chart(chart_data, color=main_color)
-        
-        # 历史明细记录
-        st.subheader("📜 详细诊断记录")
-        st.table(df.iloc[::-1]) # 倒序显示最新的
-    else:
-        st.info("系统尚在初始化，正在等待第一分钟的自动分析生成...")
+        if st.button("⬅️ 返回主控台", use_container_width=True):
+            st.session_state.current_page = "main"
+            st.rerun()
