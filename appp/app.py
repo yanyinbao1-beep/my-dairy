@@ -145,4 +145,4 @@ else:
                 column_config={"happiness": st.column_config.ProgressColumn("愉悦度", min_value=0, max_value=1), "message": "深度建议"})
         else:
             st.warning("数据收集中...")
-        st.button("⬅️ 返回主控台", on_click=lambda: st.session_state.update({"current_page":"main"}))框架不变，只是添加手势功能
+        st.button("⬅️ 返回主控台", on_click=lambda: st.session_state.update({"current_page":"main"}))
